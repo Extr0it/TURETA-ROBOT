@@ -1,0 +1,125 @@
+#include <Servo.h>
+#include <IRremote.h>
+
+#define trigPin 3
+#define echoPin 4
+
+const int irPin = 2;
+const int servo360Pin = 5;
+const int servo180Pin = 6;
+
+IRrecv irrecv(irPin);
+decode_results results;
+Servo servo360;
+Servo servo180;
+
+bool modAutomat = false;
+unsigned long lastIRTime = 0;
+int currentCommand360 = 90;
+int currentCommand180 = 0;
+int unghi180 = 60;
+int directie = 1;
+int currentPos180 = 90;
+
+void setup() {
+  Serial.begin(9600);
+  irrecv.enableIRIn();
+  servo360.attach(servo360Pin);
+  servo180.attach(servo180Pin);
+  servo360.write(90); // stop
+  servo180.write(currentPos180); // centrat
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+}
+
+void loop() {
+  // IR Remote
+  if (irrecv.decode(&results)) {
+    unsigned long cod = results.value;
+    Serial.print("Cod: ");
+    Serial.println(cod, HEX);
+
+    // Comută mod automat/manual
+    if (cod == 0xFF4AB5) {
+      modAutomat = !modAutomat;
+      Serial.println(modAutomat ? "Mod: AUTOMAT" : "Mod: MANUAL");
+    }
+
+    if (!modAutomat) {
+      // Servo 360 (rotativ continuu)
+      if (cod == 0xFF7A85 || (cod == 0xFFFFFFFF && currentCommand360 == 60)) {
+        servo360.write(60);
+        currentCommand360 = 60;
+        lastIRTime = millis();
+      } else if (cod == 0xFF30CF || (cod == 0xFFFFFFFF && currentCommand360 == 120)) {
+        servo360.write(120);
+        currentCommand360 = 120;
+        lastIRTime = millis();
+      }
+
+      // Servo 180 (mișcare continuă manuală)
+      else if (cod == 0xFF10EF || (cod == 0xFFFFFFFF && currentCommand180 == 1)) {
+        moveServo180Smooth(-1);  // stânga
+        currentCommand180 = 1;
+        lastIRTime = millis();
+      } else if (cod == 0xFF5AA5 || (cod == 0xFFFFFFFF && currentCommand180 == 2)) {
+        moveServo180Smooth(1);   // dreapta
+        currentCommand180 = 2;
+        lastIRTime = millis();
+      }
+
+      // Alt buton = stop
+      else if (cod != 0xFFFFFFFF) {
+        currentCommand360 = 90;
+        servo360.write(90);
+        currentCommand180 = 0;
+      }
+    }
+
+    irrecv.resume();
+  }
+
+  // Oprire automată după pauză
+  if (!modAutomat && millis() - lastIRTime > 150) {
+    servo360.write(90);
+    currentCommand360 = 90;
+    currentCommand180 = 0;
+  }
+
+  // Mod automat: scanează și trage
+  if (modAutomat) {
+    servo180.write(unghi180);
+    delay(150);
+    unghi180 += directie * 5;
+    if (unghi180 >= 120 || unghi180 <= 60) directie *= -1;
+
+    int dist = citesteUltrasonic();
+    Serial.print("Distanta: ");
+    Serial.println(dist);
+
+    if (dist > 0 && dist < 50) {
+      servo360.write(60);
+      delay(300);
+      servo360.write(90);
+    }
+  }
+}
+
+void moveServo180Smooth(int direction) {
+  currentPos180 += direction * 7;
+  currentPos180 = constrain(currentPos180, 0, 180);
+  servo180.write(currentPos180);
+  delay(50);
+}
+
+int citesteUltrasonic() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long dur = pulseIn(echoPin, HIGH, 20000);
+  int dist = dur * 0.034 / 2;
+  if (dist == 0 || dur == 0) return 999;
+  return dist;
+}
